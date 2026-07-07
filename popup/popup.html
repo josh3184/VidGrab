@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>VidGrab</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <img src="../icons/icon32.png" alt="" width="20" height="20" />
+        <h1>VidGrab</h1>
+      </div>
+      <button id="rescan" class="ghost" title="Rescan the page for videos">Rescan</button>
+    </header>
+
+    <section id="jobs" class="jobs" hidden></section>
+
+    <main id="list" aria-live="polite">
+      <div class="empty" id="empty">
+        <p class="empty-title">No videos detected yet</p>
+        <p class="empty-hint">
+          Press play on the video, then open this popup again. Streams are
+          detected from network traffic, so the player usually needs to start
+          loading first.
+        </p>
+      </div>
+    </main>
+
+    <footer>
+      <span id="status"></span>
+    </footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

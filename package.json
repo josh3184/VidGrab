@@ -1,0 +1,10 @@
+{
+  "name": "vidgrab",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Chrome extension that lists and downloads videos found on the current page.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}
