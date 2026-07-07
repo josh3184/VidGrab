@@ -1,7 +1,10 @@
 // VidGrab background service worker.
 // - Sniffs network responses for media files and stream playlists (per tab)
 // - Merges in <video>-element reports from the content script
+// - Dedupes: canonical URL keys + folding HLS variant playlists under masters
 // - Coordinates HLS download jobs running in the offscreen document
+
+import { canonicalKey, classifyHlsText } from './lib/dedupe.js';
 
 const VIDEO_EXT_RE = /\.(mp4|webm|mov|mkv|avi|flv|m4v|ogv)(\?|#|$)/i;
 const SEGMENT_RE = /\.(m4s|ts|aac|m4a|mp3|vtt|srt|jpg|jpeg|png|gif|webp|init)(\?|#|$)/i;
@@ -34,7 +37,7 @@ let jobCounter = 0;
 function getTabState(tabId) {
   let st = tabMedia.get(tabId);
   if (!st) {
-    st = { pageUrl: '', pageTitle: '', items: new Map() };
+    st = { pageUrl: '', pageTitle: '', items: new Map(), childKeys: new Set() };
     tabMedia.set(tabId, st);
   }
   return st;
@@ -48,6 +51,7 @@ function persistTab(tabId) {
       pageUrl: st.pageUrl,
       pageTitle: st.pageTitle,
       items: [...st.items.values()],
+      childKeys: [...st.childKeys],
     },
   });
 }
@@ -61,37 +65,90 @@ async function restoreTab(tabId) {
     st.pageUrl = saved.pageUrl;
     st.pageTitle = saved.pageTitle;
     for (const item of saved.items) st.items.set(item.key, item);
+    for (const k of saved.childKeys || []) st.childKeys.add(k);
   }
   return st;
 }
 
 function resetTab(tabId, newUrl) {
-  tabMedia.set(tabId, { pageUrl: newUrl || '', pageTitle: '', items: new Map() });
+  tabMedia.set(tabId, {
+    pageUrl: newUrl || '',
+    pageTitle: '',
+    items: new Map(),
+    childKeys: new Set(),
+  });
   chrome.storage.session.remove('tab_' + tabId);
   updateBadge(tabId);
 }
 
 function updateBadge(tabId) {
   const st = tabMedia.get(tabId);
-  const count = st ? [...st.items.values()].filter((i) => i.kind !== 'page').length : 0;
+  const count = st
+    ? [...st.items.values()].filter((i) => i.kind !== 'page' && !i.hiddenBy).length
+    : 0;
   chrome.action.setBadgeText({ tabId, text: count > 0 ? String(count) : '' });
   chrome.action.setBadgeBackgroundColor({ tabId, color: '#4f46e5' });
 }
 
 function addItem(tabId, item) {
   const st = getTabState(tabId);
-  const existing = st.items.get(item.key);
+  const key = canonicalKey(item.url, item.kind);
+  const existing = st.items.get(key);
   if (existing) {
-    // Merge: keep the richest metadata we have seen for this URL.
+    // Merge: keep the richest metadata; keep the newest URL (fresh tokens).
     for (const f of ['size', 'width', 'height', 'duration', 'title', 'contentType']) {
       if (!existing[f] && item[f]) existing[f] = item[f];
     }
+    if (item.url !== existing.url) existing.url = item.url;
   } else {
-    st.items.set(item.key, item);
+    item.key = key;
+    // A playlist referenced by an already-classified master is a duplicate.
+    if (st.childKeys.has(key)) item.hiddenBy = 'master';
+    st.items.set(key, item);
+    if (item.kind === 'hls' && !item.hiddenBy) classifyHlsItem(tabId, key);
   }
   persistTab(tabId);
   updateBadge(tabId);
   broadcast({ type: 'media-updated', tabId });
+}
+
+// Fetch and parse a detected m3u8 (small text file) so masters gain quality
+// metadata and their variant/audio playlists collapse into one entry.
+async function classifyHlsItem(tabId, key) {
+  const st = tabMedia.get(tabId);
+  const item = st && st.items.get(key);
+  if (!item || item.classified || item.hiddenBy) return;
+  item.classified = true;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(item.url, {
+      credentials: 'include',
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return;
+    const info = classifyHlsText(await res.text(), item.url);
+    item.role = info.role;
+    if (info.role === 'master') {
+      item.variantCount = info.variantCount;
+      item.maxHeight = info.maxHeight;
+      for (const childKey of info.childKeys) {
+        st.childKeys.add(childKey);
+        const child = st.items.get(childKey);
+        if (child && child.key !== key) child.hiddenBy = key;
+      }
+    } else {
+      if (!item.duration) item.duration = info.duration;
+      item.live = info.live;
+    }
+  } catch {
+    // Unreachable or unparsable playlist: leave the item as-is.
+  } finally {
+    persistTab(tabId);
+    updateBadge(tabId);
+    broadcast({ type: 'media-updated', tabId });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +184,6 @@ chrome.webRequest.onResponseStarted.addListener(
     if (!kind) return;
 
     addItem(details.tabId, {
-      key: url,
       kind,
       url,
       contentType: rawType,
@@ -303,9 +359,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     for (const v of msg.items || []) {
       const isHttp = /^https?:/i.test(v.url || '');
+      let kind = 'page';
+      if (isHttp) {
+        if (HLS_RE.test(v.url)) kind = 'hls';
+        else if (DASH_RE.test(v.url)) kind = 'dash';
+        else kind = 'file';
+      }
       addItem(tabId, {
-        key: v.url,
-        kind: isHttp ? 'file' : 'page',
+        kind,
         url: v.url,
         contentType: v.contentType || '',
         size: 0,

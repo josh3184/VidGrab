@@ -23,8 +23,17 @@ Three detection layers feed one per-tab list in the service worker:
    `webRequest.onResponseStarted` over media/xhr/other types. Classifies by
    content-type and URL: direct video files (mp4/webm/mov/...; files under
    300 KB skipped as segments/thumbnails), HLS playlists (`.m3u8`), DASH
-   manifests (`.mpd`). Deduped by URL; per-tab state mirrored to
-   `chrome.storage.session` so it survives service-worker suspension.
+   manifests (`.mpd`). Per-tab state mirrored to `chrome.storage.session`
+   so it survives service-worker suspension.
+
+   Dedupe (`lib/dedupe.js`): items are keyed by canonical URL — playlists
+   and media-file paths dedupe on origin+path (rotating signed-URL tokens
+   collapse), extensionless URLs keep their query since it may identify the
+   video. Detected `.m3u8` playlists are fetched (10 s timeout) and parsed:
+   masters gain quality metadata and their variant/audio playlist URLs are
+   recorded as child keys; any detection matching a child key is hidden
+   behind the master. Media playlists gain duration and a live flag (live
+   streams are shown but not downloadable).
 3. **Popup** (`popup/`): renders the merged list. HLS items get an inline
    quality picker fed by playlist inspection.
 

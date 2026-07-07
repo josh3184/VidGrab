@@ -130,10 +130,12 @@ function render() {
     jobsEl.appendChild(el);
   }
 
-  // Item list. Hide page-player entries that duplicate a network detection,
-  // and hide blob: players entirely when a stream was sniffed for this tab.
-  const streams = items.filter((i) => i.kind === 'hls' || i.kind === 'dash');
-  const shown = items.filter((item) => {
+  // Item list. Hide variant playlists folded under a master, page-player
+  // entries that duplicate a network detection, and blob: players when a
+  // stream was sniffed for this tab.
+  const visible = items.filter((i) => !i.hiddenBy);
+  const streams = visible.filter((i) => i.kind === 'hls' || i.kind === 'dash');
+  const shown = visible.filter((item) => {
     if (item.kind !== 'page') return true;
     if (item.url.startsWith('blob:')) return streams.length === 0;
     return true;
@@ -173,6 +175,13 @@ function renderItem(item) {
   info.appendChild(name);
 
   const metaBits = [];
+  if (item.live) metaBits.push('LIVE');
+  if (item.role === 'master' && item.variantCount) {
+    metaBits.push(
+      `${item.variantCount} qualit${item.variantCount === 1 ? 'y' : 'ies'}` +
+        (item.maxHeight ? ` up to ${item.maxHeight}p` : '')
+    );
+  }
   if (item.width && item.height) metaBits.push(`${item.width}×${item.height}`);
   if (item.duration) metaBits.push(fmtDuration(item.duration));
   if (item.size) metaBits.push(fmtSize(item.size));
@@ -192,6 +201,12 @@ function renderItem(item) {
     hint.className = 'item-note';
     hint.textContent = 'streaming player';
     actions.appendChild(hint);
+  } else if (item.live) {
+    const hint = document.createElement('span');
+    hint.className = 'item-note';
+    hint.textContent = 'live stream';
+    actions.appendChild(hint);
+    actions.appendChild(copyButton(item.url));
   } else if (item.kind === 'dash') {
     actions.appendChild(copyButton(item.url));
   } else {

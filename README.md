@@ -51,6 +51,11 @@ file URLs, and HLS streams sniffed from network traffic. Built for local use
 
 Other notes:
 
+- Detections are deduplicated: repeat requests for the same file with
+  rotating URL tokens collapse into one entry, and HLS quality/audio variant
+  playlists are folded under their master playlist (the master row shows
+  "N qualities up to 1080p"). Live streams are labeled LIVE and offer Copy
+  URL only.
 - Streams are capped at 2 GB because the file is assembled in memory.
 - If a page's video shows a `blob:` URL, that is a streaming player (MSE);
   look for an HLS entry in the list instead, and press play if there isn't

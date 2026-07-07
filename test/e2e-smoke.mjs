@@ -76,7 +76,13 @@ function startServer() {
           'text/html',
           `<!DOCTYPE html><title>Smoke Test Video Page</title>
            <video src="/video.mp4" controls></video>
-           <script>fetch('/master.m3u8').then(r => r.text());</script>`,
+           <script>
+             // Simulate a player: master, then a variant, plus a re-request
+             // of the mp4 with a rotating token (dedupe fodder).
+             fetch('/master.m3u8').then(r => r.text());
+             fetch('/v720.m3u8').then(r => r.text());
+             fetch('/video.mp4?token=rotating123').then(r => r.arrayBuffer());
+           </script>`,
         ],
         '/video.mp4': ['video/mp4', FAKE_MP4],
         '/master.m3u8': ['application/vnd.apple.mpegurl', pl.master],
@@ -159,7 +165,29 @@ try {
   );
   check(
     'HLS playlist sniffed from network',
-    allItems.some((i) => i.kind === 'hls' && i.url.endsWith('/master.m3u8'))
+    allItems.some((i) => i.kind === 'hls' && i.url.includes('/master.m3u8'))
+  );
+
+  // Dedupe assertions
+  const visible = allItems.filter((i) => !i.hiddenBy);
+  check(
+    'mp4 with rotating token deduped to one item',
+    visible.filter((i) => i.kind === 'file' && i.url.includes('/video.mp4')).length === 1,
+    JSON.stringify(visible.map((i) => i.url))
+  );
+  check(
+    'variant playlist folded under master (one visible HLS item)',
+    visible.filter((i) => i.kind === 'hls').length === 1,
+    JSON.stringify(visible.filter((i) => i.kind === 'hls').map((i) => i.url))
+  );
+  const v720Item = allItems.find((i) => i.url.includes('/v720.m3u8'));
+  check('variant item exists but is hidden', !!(v720Item && v720Item.hiddenBy));
+  const masterItem = allItems.find((i) => i.url.includes('/master.m3u8'));
+  check(
+    'master classified with quality metadata',
+    !!(masterItem && masterItem.role === 'master' && masterItem.variantCount === 2 &&
+       masterItem.maxHeight === 720),
+    masterItem && JSON.stringify({ role: masterItem.role, v: masterItem.variantCount })
   );
 
   const tabId = await sw.evaluate(async () => {
@@ -172,7 +200,7 @@ try {
     (id) => chrome.action.getBadgeText({ tabId: id }),
     tabId
   );
-  check('badge shows count', parseInt(badge, 10) >= 2, `badge="${badge}"`);
+  check('badge shows deduped count (2)', badge === '2', `badge="${badge}"`);
 
   // 2. Drive the popup flow from an extension page (same messaging path the
   //    popup uses).
