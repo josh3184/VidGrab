@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "license": "MIT",
   "description": "Chrome extension that lists and downloads videos found on the current page.",
   "scripts": {
     "test": "node --test test/*.test.mjs"

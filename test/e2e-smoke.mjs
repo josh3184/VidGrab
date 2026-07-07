@@ -3,7 +3,8 @@
 // quality inspection, segment download + decryption, and final file assembly.
 //
 // Usage: node test/e2e-smoke.mjs
-// Requires a playwright install; path is resolved below.
+// Requires playwright with a Chromium build:
+//   npm i --no-save playwright && npx playwright install chromium
 
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -12,8 +13,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 
-const PLAYWRIGHT_HOME = '/home/josh/code/apex-season/package.json';
-const { chromium } = createRequire(PLAYWRIGHT_HOME)('playwright');
+let chromium;
+try {
+  ({ chromium } = createRequire(import.meta.url)('playwright'));
+} catch {
+  console.error(
+    'playwright not found. Install it first:\n' +
+      '  npm i --no-save playwright && npx playwright install chromium'
+  );
+  process.exit(2);
+}
 
 const EXT_DIR = path.resolve(new URL('..', import.meta.url).pathname);
 
@@ -149,6 +158,12 @@ try {
   let [sw] = context.serviceWorkers();
   if (!sw) sw = await context.waitForEvent('serviceworker', { timeout: 15000 });
   check('service worker registered', !!sw, 'extension failed to load');
+
+  // Playwright attaches to the extension service worker via CDP and can
+  // leave it paused briefly after launch; without this round-trip the page
+  // may start issuing requests while the worker is paused and its
+  // webRequest events are silently lost (test-harness artifact only).
+  await sw.evaluate(() => 0);
 
   const page = await context.newPage();
   await page.goto(pageUrl);

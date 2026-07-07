@@ -7,10 +7,19 @@ file URLs, and HLS streams sniffed from network traffic. Built for local use
 
 ## Install
 
-1. Open `chrome://extensions`
-2. Turn on **Developer mode** (top right)
-3. Click **Load unpacked** and pick this folder (`vidgrab`)
-4. Pin the VidGrab icon to the toolbar if you like
+1. Clone or download this repository:
+
+   ```
+   git clone https://github.com/josh3184/VidGrab.git
+   ```
+
+2. Open `chrome://extensions` (also works in Chromium-based browsers such as
+   Edge and Brave)
+3. Turn on **Developer mode** (top right)
+4. Click **Load unpacked** and pick the cloned folder
+5. Pin the VidGrab icon to the toolbar if you like
+
+There is no build step; the folder loads as-is.
 
 ## Use
 
@@ -66,12 +75,18 @@ Other notes:
 ## Development
 
 ```
-npm test                  # m3u8 parser unit tests (node --test)
-node test/e2e-smoke.mjs   # full end-to-end test in headless Chromium
+npm test                      # unit tests (node --test), no dependencies
+node test/e2e-smoke.mjs       # end-to-end test in headless Chromium
 python3 tools/make_icons.py   # regenerate icons
 ```
 
-No build step and no dependencies; the folder is loaded as-is.
+The e2e test loads the extension into a real headless Chromium, serves a test
+page with an mp4 and an AES-128 encrypted HLS stream, and verifies detection,
+dedupe, download, and decryption. It needs playwright:
+
+```
+npm i --no-save playwright && npx playwright install chromium
+```
 
 ## Layout
 
@@ -80,7 +95,14 @@ manifest.json           MV3 manifest
 background.js           service worker: network sniffing, tab state, download jobs
 content.js              scans frames for <video> elements
 lib/m3u8.js             HLS playlist parser (shared with tests)
+lib/dedupe.js           canonical URL keys + playlist classification
 offscreen/              offscreen document: segment download, AES-128 decrypt, assembly
 popup/                  the popup UI
 test/                   unit tests + e2e smoke test
 ```
+
+## Legal
+
+MIT licensed; see [LICENSE](LICENSE). VidGrab is a personal tool for saving
+videos you have legitimate access to. It does not and will not circumvent
+DRM. Respect the copyright and terms of service of the sites you use it on.
