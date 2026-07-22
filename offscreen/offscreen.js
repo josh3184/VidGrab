@@ -6,6 +6,7 @@ import {
   sequenceIv,
   hasUnsupportedEncryption,
 } from '../lib/m3u8.js';
+import { tsToMp4 } from '../lib/transmux.js';
 
 // Hard cap on assembled output; blobs live in memory.
 const MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
@@ -183,21 +184,31 @@ async function downloadMediaPlaylist(url, jobId, signal, progressBase) {
   );
   await Promise.all(workers);
 
-  // Container detection: fMP4 (init segment or ftyp/styp box) -> .mp4,
-  // MPEG-TS (0x47 sync byte) -> .ts
+  // Container detection + output shaping:
+  //   fMP4 (init segment or ftyp/styp box) -> pass through as .mp4
+  //   MPEG-TS (0x47 sync byte)             -> transmux to fMP4, or fall back to
+  //                                           the raw .ts if transmux fails
+  //   anything else                        -> .bin
   const first = initPart || parts[0];
-  let ext = 'ts';
-  let mime = 'video/mp2t';
+
   if (initPart || looksLikeMp4(first)) {
-    ext = 'mp4';
-    mime = 'video/mp4';
-  } else if (first && first[0] !== 0x47) {
-    ext = 'bin';
-    mime = 'application/octet-stream';
+    const blobParts = initPart ? [initPart, ...parts] : parts;
+    return { blob: new Blob(blobParts, { type: 'video/mp4' }), ext: 'mp4', bytes, segments: total };
   }
 
-  const blobParts = initPart ? [initPart, ...parts] : parts;
-  return { blob: new Blob(blobParts, { type: mime }), ext, bytes, segments: total };
+  if (first && first[0] === 0x47) {
+    try {
+      const mp4 = tsToMp4(parts);
+      return { blob: new Blob([mp4], { type: 'video/mp4' }), ext: 'mp4', bytes: mp4.byteLength, segments: total };
+    } catch (e) {
+      // Couldn't transmux (e.g. HEVC or unexpected codec) — keep the raw .ts so
+      // the download is never lost; it can be converted later with ffmpeg.
+      console.warn('VidGrab: TS->MP4 transmux failed, saving raw .ts:', e);
+      return { blob: new Blob(parts, { type: 'video/mp2t' }), ext: 'ts', bytes, segments: total };
+    }
+  }
+
+  return { blob: new Blob(parts, { type: 'application/octet-stream' }), ext: 'bin', bytes, segments: total };
 }
 
 function looksLikeMp4(data) {

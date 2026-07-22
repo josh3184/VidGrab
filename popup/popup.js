@@ -35,6 +35,11 @@ function fmtDuration(sec) {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
+function fmtBitrate(kbps) {
+  if (!kbps) return '';
+  return kbps >= 1000 ? `${(kbps / 1000).toFixed(1)} Mbps` : `${Math.round(kbps)} kbps`;
+}
+
 function hostOf(url) {
   try {
     return new URL(url).hostname;
@@ -183,8 +188,14 @@ function renderItem(item) {
     );
   }
   if (item.width && item.height) metaBits.push(`${item.width}×${item.height}`);
+  else if (item.height) metaBits.push(`${item.height}p`);
+  // Bare variant playlists carry an estimated bitrate (see classifyHlsItem);
+  // the ~ marks it as approximate. It's the clearest signal when two same-title
+  // streams differ only in quality.
+  if (item.estBitrateKbps) metaBits.push('~' + fmtBitrate(item.estBitrateKbps));
   if (item.duration) metaBits.push(fmtDuration(item.duration));
-  if (item.size) metaBits.push(fmtSize(item.size));
+  // An HLS/DASH item's size is just the manifest text, not the video, so skip it.
+  if (item.size && item.kind !== 'hls' && item.kind !== 'dash') metaBits.push(fmtSize(item.size));
   metaBits.push(hostOf(item.url));
   const meta = document.createElement('div');
   meta.className = 'item-meta';

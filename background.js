@@ -5,6 +5,7 @@
 // - Coordinates HLS download jobs running in the offscreen document
 
 import { canonicalKey, classifyHlsText } from './lib/dedupe.js';
+import { qualityHintFromUrl, bitrateKbps } from './lib/m3u8.js';
 
 const VIDEO_EXT_RE = /\.(mp4|webm|mov|mkv|avi|flv|m4v|ogv)(\?|#|$)/i;
 const SEGMENT_RE = /\.(m4s|ts|aac|m4a|mp3|vtt|srt|jpg|jpeg|png|gif|webp|init)(\?|#|$)/i;
@@ -141,6 +142,17 @@ async function classifyHlsItem(tabId, key) {
     } else {
       if (!item.duration) item.duration = info.duration;
       item.live = info.live;
+      // Bare variant playlist: no master to read RESOLUTION/BANDWIDTH from, so
+      // guess quality from the URL first (free), then refine with a measured
+      // bitrate from a couple of segments. Skip live streams — their segment
+      // window shifts and the estimate isn't worth the churn.
+      const hint = qualityHintFromUrl(item.url);
+      if (hint.height) item.height = hint.height;
+      if (hint.bitrateKbps) item.estBitrateKbps = hint.bitrateKbps;
+      if (!item.live) {
+        const measured = await estimateBitrate(info.sample);
+        if (measured) item.estBitrateKbps = measured;
+      }
     }
   } catch {
     // Unreachable or unparsable playlist: leave the item as-is.
@@ -149,6 +161,51 @@ async function classifyHlsItem(tabId, key) {
     updateBadge(tabId);
     broadcast({ type: 'media-updated', tabId });
   }
+}
+
+// Fetch the content-length of a segment without downloading its body: try HEAD,
+// then fall back to a GET whose body we abort as soon as the headers land.
+async function segmentBytes(uri) {
+  try {
+    const res = await fetchWithTimeout(uri, { method: 'HEAD' }, 5000);
+    const len = parseInt(res.headers.get('content-length'), 10);
+    if (len > 0) return len;
+  } catch {
+    // HEAD unsupported or blocked; fall through to a ranged GET.
+  }
+  const controller = new AbortController();
+  try {
+    const res = await fetch(uri, {
+      credentials: 'include',
+      signal: controller.signal,
+    });
+    const len = parseInt(res.headers.get('content-length'), 10);
+    return len > 0 ? len : 0;
+  } catch {
+    return 0;
+  } finally {
+    controller.abort(); // discard the body; we only wanted the size
+  }
+}
+
+function fetchWithTimeout(url, opts, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return fetch(url, { credentials: 'include', ...opts, signal: controller.signal })
+    .finally(() => clearTimeout(timer));
+}
+
+// Average bitrate (kbps) of the sampled segments, or 0 if any size is unknown.
+// Byterange segments carry their own length, so those need no network probe.
+async function estimateBitrate(sample) {
+  if (!sample || !sample.seconds || !sample.segments.length) return 0;
+  let bytes = 0;
+  for (const seg of sample.segments) {
+    const size = seg.byteRangeLength || (await segmentBytes(seg.uri));
+    if (!size) return 0; // one unknown size makes the whole estimate unreliable
+    bytes += size;
+  }
+  return bitrateKbps(bytes, sample.seconds);
 }
 
 // ---------------------------------------------------------------------------

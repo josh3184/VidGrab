@@ -37,8 +37,10 @@ There is no build step; the folder loads as-is.
 ### What lands in your Downloads folder
 
 - Direct files (mp4/webm/mov/...) download as-is.
-- HLS streams are assembled into a single file: `.ts` for MPEG-TS streams
-  (plays in VLC/mpv; most players handle it) or `.mp4` for fMP4 streams.
+- HLS streams are assembled into a single `.mp4`. MPEG-TS streams (H.264 + AAC)
+  are transmuxed to MP4 in the browser (lossless, no re-encode) via mux.js;
+  fMP4 streams pass through as-is. If a stream can't be transmuxed (e.g. HEVC),
+  VidGrab falls back to saving the raw `.ts` so the download is never lost.
 - Some sites stream video and audio separately (demuxed). VidGrab saves both
   files (`name.mp4` + `name.audio.m4a`) and tells you. Combine them with:
 

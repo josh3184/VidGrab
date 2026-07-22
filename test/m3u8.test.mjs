@@ -6,6 +6,9 @@ import {
   parseHexIv,
   sequenceIv,
   hasUnsupportedEncryption,
+  qualityHintFromUrl,
+  sampleForBitrate,
+  bitrateKbps,
 } from '../lib/m3u8.js';
 
 const BASE = 'https://cdn.example.com/vod/stream/index.m3u8';
@@ -171,4 +174,98 @@ https://other-cdn.example.net/seg1.ts
 `;
   const p = parsePlaylist(text, BASE);
   assert.equal(p.segments[0].uri, 'https://other-cdn.example.net/seg1.ts');
+});
+
+test('qualityHintFromUrl: NNNp marker', () => {
+  assert.equal(qualityHintFromUrl('https://cdn.example.com/hls/720p/index.m3u8').height, 720);
+  assert.equal(qualityHintFromUrl('https://cdn.example.com/v/master_1080p.m3u8').height, 1080);
+});
+
+test('qualityHintFromUrl: WxH resolution in path', () => {
+  const h = qualityHintFromUrl('https://cdn.example.com/x/chunklist_w1920x1080.m3u8');
+  assert.equal(h.height, 1080);
+});
+
+test('qualityHintFromUrl: known height token bounded by separators', () => {
+  assert.equal(qualityHintFromUrl('https://cdn.example.com/hls_720/chunk.m3u8').height, 720);
+  assert.equal(qualityHintFromUrl('https://cdn.example.com/v/index-1080.m3u8').height, 1080);
+});
+
+test('qualityHintFromUrl: bitrate marker in kbps', () => {
+  assert.equal(qualityHintFromUrl('https://cdn.example.com/hls/video_2500k.m3u8').bitrateKbps, 2500);
+  assert.equal(qualityHintFromUrl('https://cdn.example.com/hls/v-800kbps.m3u8').bitrateKbps, 800);
+});
+
+test('qualityHintFromUrl: no false positives from unrelated digits', () => {
+  const h = qualityHintFromUrl('https://cdn.example.com/2024/06/clip/index.m3u8?id=999999');
+  assert.equal(h.height, 0);
+  assert.equal(h.bitrateKbps, 0);
+});
+
+test('qualityHintFromUrl: unparsable URL returns zeros', () => {
+  assert.deepEqual(qualityHintFromUrl('not a url'), { height: 0, bitrateKbps: 0 });
+});
+
+test('sampleForBitrate: takes leading segments up to the time budget', () => {
+  const text = `#EXTM3U
+#EXTINF:6.0,
+a.ts
+#EXTINF:6.0,
+b.ts
+#EXTINF:6.0,
+c.ts
+#EXT-X-ENDLIST
+`;
+  const p = parsePlaylist(text, BASE);
+  const s = sampleForBitrate(p, 8);
+  assert.equal(s.segments.length, 2); // 6 + 6 >= 8, stop
+  assert.equal(s.seconds, 12);
+  assert.equal(s.segments[0].uri, 'https://cdn.example.com/vod/stream/a.ts');
+  assert.equal(s.segments[0].byteRangeLength, 0);
+});
+
+test('sampleForBitrate: caps at maxSegments even below the time budget', () => {
+  const text = `#EXTM3U
+#EXTINF:1.0,
+a.ts
+#EXTINF:1.0,
+b.ts
+#EXTINF:1.0,
+c.ts
+#EXTINF:1.0,
+d.ts
+#EXT-X-ENDLIST
+`;
+  const p = parsePlaylist(text, BASE);
+  const s = sampleForBitrate(p, 30, 3);
+  assert.equal(s.segments.length, 3);
+});
+
+test('sampleForBitrate: byterange segments carry their length so no fetch is needed', () => {
+  const text = `#EXTM3U
+#EXT-X-MAP:URI="init.mp4",BYTERANGE="720@0"
+#EXTINF:4.0,
+#EXT-X-BYTERANGE:1000@720
+media.mp4
+#EXTINF:4.0,
+#EXT-X-BYTERANGE:2000
+media.mp4
+#EXT-X-ENDLIST
+`;
+  const p = parsePlaylist(text, BASE);
+  const s = sampleForBitrate(p, 30, 5);
+  assert.equal(s.segments[0].byteRangeLength, 1000);
+  assert.equal(s.segments[1].byteRangeLength, 2000);
+});
+
+test('sampleForBitrate: master or empty input yields nothing', () => {
+  assert.deepEqual(sampleForBitrate({ kind: 'master' }), { segments: [], seconds: 0 });
+  assert.deepEqual(sampleForBitrate(null), { segments: [], seconds: 0 });
+});
+
+test('bitrateKbps: bytes over seconds as kilobits per second', () => {
+  // 1,000,000 bytes over 8 s = 8,000,000 bits / 8 s = 1,000,000 bps = 1000 kbps
+  assert.equal(bitrateKbps(1_000_000, 8), 1000);
+  assert.equal(bitrateKbps(0, 8), 0);
+  assert.equal(bitrateKbps(1000, 0), 0);
 });

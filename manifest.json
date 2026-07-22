@@ -3,6 +3,7 @@
   "name": "VidGrab",
   "version": "1.0.0",
   "description": "Lists videos found on the current page (video tags, direct files, HLS streams) with a download button for each.",
+  "incognito": "split",
   "permissions": [
     "webRequest",
     "downloads",

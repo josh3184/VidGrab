@@ -45,10 +45,14 @@ Downloads:
   fetch segments (concurrency 4, 2 retries, ordered) -> AES-128-CBC decrypt
   via WebCrypto when keyed (IV from attribute or media-sequence) ->
   concatenate to Blob -> blob URL handed to the service worker for
-  `chrome.downloads.download`. Container sniffing picks `.mp4` (fMP4:
-  EXT-X-MAP or ftyp/styp/moof) vs `.ts` (0x47 sync byte). Demuxed audio
-  groups are downloaded as a second file with an ffmpeg hint. 2 GB cap
-  (in-memory assembly). Live playlists (no ENDLIST) are refused.
+  `chrome.downloads.download`. Container sniffing (fMP4: EXT-X-MAP or
+  ftyp/styp/moof; MPEG-TS: 0x47 sync byte) decides output: fMP4 passes
+  through as-is, MPEG-TS (H.264 + AAC) is transmuxed to MP4 in-memory via
+  the vendored mux.js bundle (lossless container rewrap, no re-encode). If a
+  stream can't be transmuxed (e.g. HEVC), it falls back to saving the raw
+  `.ts` so the download is never lost. Demuxed audio groups are downloaded
+  as a second file with an ffmpeg hint. 2 GB cap (in-memory assembly). Live
+  playlists (no ENDLIST) are refused.
 - **DASH**: listed with Copy URL only; correct output needs a real muxer.
 - **DRM / SAMPLE-AES**: detected and refused. Out of scope permanently.
 
@@ -63,9 +67,11 @@ can be closed and reopened mid-download.
   cannot create blob URLs and the popup dies on close; the offscreen
   document is the one extension context that can both fetch cross-origin
   (with host_permissions) and hold blobs for the SW to download.
-- **No ffmpeg/wasm muxer**: keeps the extension dependency-free. Cost:
-  demuxed audio ships as a second file, and DASH is out of scope. yt-dlp is
-  the right tool for those cases anyway.
+- **mux.js transmuxer, but no re-encoder**: MPEG-TS is rewrapped to MP4
+  losslessly via the vendored mux.js bundle (the one bundled dependency),
+  so single-stream HLS lands as a directly-playable `.mp4`. We stop short
+  of a full ffmpeg/wasm re-encoder: demuxed audio still ships as a second
+  file, and DASH stays out of scope. yt-dlp is the right tool for those.
 - **Sniffing over parsing site players**: works on any site without
   per-site adapters, at the cost of requiring the user to press play first.
 
